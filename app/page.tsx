@@ -92,7 +92,7 @@ export default function Home() {
   const getUserMedia = useCallback(() => {
     setLoading(true);
     mediapipeRef.current
-      ?.initUserMedia(() => {
+      ?.initUserMedia(setLandmarks, () => {
         helperRef.current?.resizeCanvas(
           videoRef.current?.offsetWidth || 0,
           videoRef.current?.offsetHeight || 0
@@ -101,7 +101,6 @@ export default function Home() {
           videoRef.current?.offsetWidth || 0,
           videoRef.current?.offsetHeight || 0
         );
-        mediapipeRef.current?.onMessage(setLandmarks);
         musicRef.current!.volume = guiRef.current.volume;
         musicRef.current?.play();
         setIsGameStarted(true);

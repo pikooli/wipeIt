@@ -1,47 +1,48 @@
-import { HandLandmarkerResult } from '@mediapipe/tasks-vision';
-import { MESSAGE_TYPE } from './constant';
+import {
+  FilesetResolver,
+  HandLandmarker,
+  HandLandmarkerResult,
+} from '@mediapipe/tasks-vision';
+
+const createHandLandmarker = async () => {
+  console.log('loading handLandmarker');
+  const vision = await FilesetResolver.forVisionTasks(
+    'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.0/wasm'
+  );
+  console.log('vision loaded');
+  handLandmarker = await HandLandmarker.createFromOptions(vision, {
+    baseOptions: {
+      modelAssetPath: `https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task`,
+      delegate: 'GPU',
+    },
+    runningMode: runningMode,
+    numHands: 2,
+  });
+  console.log('handLandmarker loaded', handLandmarker);
+  return handLandmarker;
+};
+
+let handLandmarker: HandLandmarker;
+
+const runningMode = 'VIDEO';
 
 export class MediapipeModel {
   videoRef: React.RefObject<HTMLVideoElement>;
-  worker: Worker;
   lastVideoTimeRef = 0;
   isInitialized = false;
+  landmarker: HandLandmarker | null = null;
 
-  constructor(
-    videoRef: React.RefObject<HTMLVideoElement>,
-  ) {
+  constructor(videoRef: React.RefObject<HTMLVideoElement>) {
     this.videoRef = videoRef;
-    this.worker = new Worker(new URL('./workerMediapipe.ts', import.meta.url), {
-      type: 'module',
-    });
-    this.worker.onmessage = (event) => {
-      if (event.data.type === MESSAGE_TYPE.STATUS) {
-        if (event.data.results === 'ready') {
-        }
-        else {
-          throw new Error(event.data.results);
-        }
-      }
-    };
   }
 
-  onMessage = (updateResults: (results: HandLandmarkerResult) => void) =>{
-    this.worker.onmessage = async (
-      event: MessageEvent<{
-        type: string;
-        results: HandLandmarkerResult;
-        status: string;
-      }>
-    ) => {
-      updateResults(event.data.results);
-    };
-  }
 
-  initUserMedia = async (callback?: () => void) => {
+  initUserMedia = async (updateResults: (results: HandLandmarkerResult) => void, callback?: () => void) => {
     try {
       if (this.isInitialized) {
         return;
       }
+      this.landmarker = await createHandLandmarker();
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: 'user',
@@ -51,7 +52,7 @@ export class MediapipeModel {
       if (this.videoRef.current) {
         this.videoRef.current.srcObject = stream;
         this.videoRef.current.addEventListener('loadeddata', () => {
-          this.detectForVideo();
+          this.detectForVideo(updateResults);
           callback?.();
           console.log('====== initUserMedia');
         });
@@ -63,8 +64,8 @@ export class MediapipeModel {
     }
   };
 
-  detectForVideo = async () => {
-    if (!this.videoRef.current || !this.worker) {
+  detectForVideo = async (updateResults: (results: HandLandmarkerResult) => void) => {
+    if (!this.videoRef.current || !this.landmarker) {
       return;
     }
 
@@ -78,34 +79,20 @@ export class MediapipeModel {
 
     if (this.lastVideoTimeRef !== this.videoRef.current.currentTime && ctx) {
       this.lastVideoTimeRef = this.videoRef.current.currentTime;
-      ctx.drawImage(
-        this.videoRef.current,
-        0,
-        0,
+      ctx.drawImage(this.videoRef.current, 0, 0, width, height);
+      const imageData = ctx.getImageData(0, 0, width, height);
+      const image = new ImageData(
+        new Uint8ClampedArray(imageData.data),
         width,
         height
       );
-      const imageData = ctx.getImageData(
-        0,
-        0,
-        width,
-        height
-      );
-      this.worker.postMessage(
-        {
-          type: MESSAGE_TYPE.DETECT,
-          imageData: imageData.data.buffer,
-          width,
-          height,
-          timestamp: startTimeMs,
-        },
-        [imageData.data.buffer]
-      );
+      const results = await this.landmarker.detectForVideo(image, startTimeMs);
+      updateResults(results);
     }
-    window.requestAnimationFrame(this.detectForVideo);
+    window.requestAnimationFrame(() => this.detectForVideo(updateResults));
   };
 
   destroy = () => {
-    this.worker.terminate();
+    // this.worker.terminate();
   };
 }
